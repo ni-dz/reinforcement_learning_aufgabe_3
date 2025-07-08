@@ -6,6 +6,7 @@ from dqn_agent import DQNAgent
 from utils import setup_live_plot, update_plot, moving_average
 import matplotlib.pyplot as plt
 import torch
+import time
 
 env = gym.make("CarRacing-v3", continuous=False, render_mode="rgb_array")
 agent = DQNAgent(action_dim=5)
@@ -18,6 +19,7 @@ step_limit = 500  # Reduzierte Schrittzahl pro Episode für schnellere Ausführu
 fig, ax, reward_line, loss_line, epsilon_line, rewards_list, losses_list, epsilon_list = setup_live_plot()
 
 for episode in range(num_episodes):
+    start_time = time.time()
     state, _ = env.reset()
     episode_reward = 0
     done = False
@@ -60,6 +62,9 @@ for episode in range(num_episodes):
 
         frame_count += 1
         step_count += 1
+    
+    end_time = time.time()  # Endzeit messen
+    episode_duration = end_time - start_time
 
     agent.epsilon = max(agent.epsilon * agent.epsilon_decay, agent.epsilon_min)
 
@@ -70,8 +75,9 @@ for episode in range(num_episodes):
     update_plot(rewards_list, losses_list, epsilon_list, reward_line, loss_line, epsilon_line, ax)
 
     ma_reward = moving_average(rewards_list, window_size=10)
-    print(f"Episode {episode+1}/{num_episodes}, Reward: {episode_reward:.2f}, MA10: {ma_reward[-1]:.2f}, "
-          f"Epsilon: {agent.epsilon:.3f}, Loss: {loss:.4f}")
+    print(f"Episode {episode+1}/{num_episodes} | Reward: {episode_reward:.2f} | "
+      f"MA10: {ma_reward[-1]:.2f} | Epsilon: {agent.epsilon:.3f}, Loss: {loss:.4f} | "
+      f"Duration: {episode_duration:.2f} seconds")
 
 env.close()
 cv2.destroyAllWindows()
