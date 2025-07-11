@@ -1,69 +1,121 @@
+# main.py
 import gymnasium as gym
+from gymnasium.wrappers import ResizeObservation
+from gymnasium.wrappers.stateful_observation import FrameStackObservation
+from gymnasium.wrappers.transform_observation import GrayscaleObservation
+
+# from utils import GrayScaleObservation  # Wenn du den Wrapper in utils.py speicherst
 import numpy as np
 import cv2
 from dqn_agent import DQNAgent
-from car_racing_rl.utils import setup_live_plot, update_plot, moving_average
+from utils import setup_live_plot, update_plot, moving_average
 import matplotlib.pyplot as plt
 import torch
 import time
 
-env = gym.make("CarRacing-v3", continuous=False, render_mode="rgb_array")
+def discrete_to_continuous_action(action):
+    """
+    Convert discrete action to continuous action for CarRacing environment.
+    Actions: [steering, gas, brake]
+    """
+    if action == 0:  # Do nothing
+        return np.array([0.0, 0.0, 0.0])
+    elif action == 1:  # Turn left
+        return np.array([-1.0, 0.0, 0.0])
+    elif action == 2:  # Turn right
+        return np.array([1.0, 0.0, 0.0])
+    elif action == 3:  # Gas
+        return np.array([0.0, 1.0, 0.0])
+    elif action == 4:  # Brake
+        return np.array([0.0, 0.0, 0.8])
+    else:
+        return np.array([0.0, 0.0, 0.0])
+
+class SkipFrame(gym.Wrapper):
+    def __init__(self, env, skip):
+        super().__init__(env)
+        self._skip = skip
+        self.observation_space = env.observation_space
+        self.action_space = env.action_space
+
+    def step(self, action):
+        total_reward = 0.0
+        terminated = False
+        truncated = False
+        info = {}
+        for _ in range(self._skip):
+            obs, reward, terminated, truncated, info = self.env.step(action)
+            total_reward += reward
+            if terminated or truncated:
+                break
+        return obs, total_reward, terminated, truncated, info
+
+
+env = gym.make("CarRacing-v3", render_mode="human")
+env = GrayscaleObservation(env, keep_dim=False)
+env = ResizeObservation(env, (84, 84))
+env = FrameStackObservation(env, stack_size=4)
+env = SkipFrame(env, skip=4)
+
+
 agent = DQNAgent(action_dim=5)
-num_episodes = 2500
-frame_skip = 8
-step_limit = 500
+num_episodes = 2000
+episode_rewards = []
+frame_skip = 4
 
 fig, ax, reward_line, loss_line, epsilon_line, rewards_list, losses_list, epsilon_list = setup_live_plot()
 
+print("Observation Space:", env.observation_space)
+
 for episode in range(num_episodes):
-    start_time = time.time()
     state, _ = env.reset()
-    episode_reward = 0
     done = False
-    step_count = 0
-    frame_count = 0
+    episode_reward = 0
+    step_num = 0
+    neg_count = 0
 
-    # NUR jede 20. Episode anzeigen (beschleunigt Training)
-    show_render = (episode + 1) % 20 == 0
+    start_time = time.time()
+    show_render = (episode + 1) % 1 == 0  # Jede 2. Episode zeigen
 
-    while not done and step_count < step_limit:
+    while not done:
         if show_render:
-            img = env.render()
-            cv2.imshow("CarRacing", img)
-            if cv2.waitKey(1) == ord('q'):
-                done = True
+            env.render()  # Zeigt das Spiel-Fenster
+            # Optional: Kleine Pause für bessere Sichtbarkeit
+            time.sleep(0.01)
+
+        action = agent.select_action(np.array(state))
+        continuous_action = discrete_to_continuous_action(action)
+        next_state, reward, terminated, truncated, info = env.step(continuous_action)
+
+        if info.get("on_grass", False):
+            reward -= 20  # Gras fahren = schlecht, aber nicht katastrophal
+
+        if info.get("track_direction", 1) < 0:
+            reward -= 50  # Falsche Richtung = absolut schlimm
+            terminated = True
+
+
+        episode_reward += reward
+        step_num += 1
+
+        # Abbruchbedingungen falls Agent nicht mehr vorwärts kommt
+        if episode_reward < 0:
+            break
+        if step_num > 300:
+            if reward < 0:
+                neg_count += 1
+            if neg_count >= 25:
                 break
 
-        state_gray = cv2.resize(state, (96, 96))
-        state_gray = np.transpose(state_gray, (2, 0, 1))
-
-        if frame_count % frame_skip == 0:
-            action = agent.select_action(state_gray)
-        next_state, reward, terminated, truncated, _ = env.step(action)
-
-        reward -= 0.5
+        agent.replay_buffer.push(np.array(state), action, reward, np.array(next_state), terminated)
+        loss = agent.train_step()
+        state = next_state
         done = terminated or truncated
 
-        if reward < -20:
-            done = True
-            reward -= 100
-
-        next_state_gray = cv2.resize(next_state, (96, 96))
-        next_state_gray = np.transpose(next_state_gray, (2, 0, 1))
-
-        agent.replay_buffer.push(state_gray, action, reward, next_state_gray, done)
-        state = next_state
-
-        loss = agent.train_step()
-        episode_reward += reward
-
-        frame_count += 1
-        step_count += 1
+    agent.decay_epsilon(episode, factor=0.7)
 
     end_time = time.time()
     episode_duration = end_time - start_time
-
-    agent.epsilon = max(agent.epsilon * agent.epsilon_decay, agent.epsilon_min)
 
     rewards_list.append(episode_reward)
     losses_list.append(loss)
@@ -80,7 +132,6 @@ for episode in range(num_episodes):
         torch.save(agent.q_net.state_dict(), f"checkpoint_episode_{episode+1}.pth")
 
 env.close()
-cv2.destroyAllWindows()
 
 plt.plot(rewards_list, label='Reward')
 plt.plot(losses_list, label='Loss')

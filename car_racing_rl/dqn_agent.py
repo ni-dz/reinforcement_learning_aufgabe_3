@@ -10,7 +10,7 @@ class DQN(nn.Module):
     def __init__(self, action_dim):
         super(DQN, self).__init__()
         self.conv = nn.Sequential(
-            nn.Conv2d(3, 32, kernel_size=8, stride=4),
+            nn.Conv2d(4, 32, kernel_size=8, stride=4),
             nn.ReLU(),
             nn.Conv2d(32, 64, kernel_size=4, stride=2),
             nn.ReLU(),
@@ -18,16 +18,21 @@ class DQN(nn.Module):
             nn.ReLU(),
         )
         self.fc = nn.Sequential(
-            nn.Linear(8 * 8 * 64, 512),
+            nn.Linear(3136, 512),
             nn.ReLU(),
-            nn.Linear(512, action_dim),
+            nn.Linear(512, 256),
+            nn.ReLU(),
+            nn.Linear(256, 128),
+            nn.ReLU(),
+            nn.Linear(128, action_dim),
         )
 
     def forward(self, x):
-        x = x / 255.0
+        x = x / 255.0  # Normalize pixel values
         x = self.conv(x)
-        x = x.view(x.size(0), -1)
+        x = torch.flatten(x, 1)
         return self.fc(x)
+
 
 class ReplayBuffer:
     def __init__(self, capacity):
@@ -37,8 +42,6 @@ class ReplayBuffer:
         self.buffer.append((state, action, reward, next_state, done))
 
     def sample(self, batch_size):
-        if len(self.buffer) < batch_size:
-            raise ValueError("Replay buffer has too few samples to draw a batch.")
         batch = random.sample(self.buffer, batch_size)
         state, action, reward, next_state, done = zip(*batch)
         return np.stack(state), action, reward, np.stack(next_state), done
@@ -46,21 +49,23 @@ class ReplayBuffer:
     def __len__(self):
         return len(self.buffer)
 
+
 class DQNAgent:
-    def __init__(self, action_dim):
+    def __init__(self, action_dim, ddqn=True):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.q_net = DQN(action_dim).to(self.device)
         self.target_net = DQN(action_dim).to(self.device)
         self.target_net.load_state_dict(self.q_net.state_dict())
-        self.optimizer = optim.Adam(self.q_net.parameters(), lr=5e-4)
-        self.replay_buffer = ReplayBuffer(100_000)
-        self.batch_size = 32
+        self.optimizer = optim.Adam(self.q_net.parameters(), lr=1e-4)
+        self.replay_buffer = ReplayBuffer(800_000)
+        self.batch_size = 64
         self.gamma = 0.99
-        self.epsilon = 1.0
-        self.epsilon_decay = 0.999  # Langsamerer Abfall → länger Exploration
-        self.epsilon_min = 0.05
-        self.update_target_every = 100
-        self.step_count = 0
+        self.epsilon = 0.8
+        self.epsilon_start = 0.8
+        self.epsilon_min = 0.1
+        self.ddqn = ddqn
+        self.TAU = 0.005
+        self.criterion = nn.SmoothL1Loss()
 
     def select_action(self, state):
         if random.random() < self.epsilon:
@@ -71,8 +76,8 @@ class DQNAgent:
         return q_values.argmax().item()
 
     def train_step(self):
-        if len(self.replay_buffer) < 1000:
-            return 0  # Erst trainieren, wenn mehr Samples vorhanden sind
+        if len(self.replay_buffer) < self.batch_size:
+            return 0
 
         states, actions, rewards, next_states, dones = self.replay_buffer.sample(self.batch_size)
 
@@ -83,18 +88,26 @@ class DQNAgent:
         dones = torch.FloatTensor(dones).unsqueeze(1).to(self.device)
 
         q_values = self.q_net(states).gather(1, actions)
+
         with torch.no_grad():
-            next_q_values = self.target_net(next_states).max(1, keepdim=True)[0]
+            if self.ddqn:
+                next_actions = self.q_net(next_states).argmax(1, keepdim=True)
+                next_q_values = self.target_net(next_states).gather(1, next_actions)
+            else:
+                next_q_values = self.target_net(next_states).max(1, keepdim=True)[0]
             target_q = rewards + (1 - dones) * self.gamma * next_q_values
 
-        loss = nn.MSELoss()(q_values, target_q)
+        loss = self.criterion(q_values, target_q)
 
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
 
-        self.step_count += 1
-        if self.step_count % self.update_target_every == 0:
-            self.target_net.load_state_dict(self.q_net.state_dict())
+        # Soft update for Target Network
+        for target_param, param in zip(self.target_net.parameters(), self.q_net.parameters()):
+            target_param.data.copy_(param.data * self.TAU + target_param.data * (1 - self.TAU))
 
         return loss.item()
+
+    def decay_epsilon(self, episode, factor=0.7):
+        self.epsilon = self.epsilon_min + (self.epsilon_start - self.epsilon_min) * np.exp(-factor * episode)
