@@ -1,29 +1,33 @@
-# test_agent.py
 import gymnasium as gym
-from gymnasium.wrappers import ResizeObservation
-from gymnasium.wrappers.stateful_observation import FrameStackObservation
-from gymnasium.wrappers.transform_observation import GrayscaleObservation
-import numpy as np
+from gymnasium.wrappers import (
+    ResizeObservation,
+    FrameStackObservation,
+    GrayscaleObservation,
+)
 import torch
-import time
-from dqn_agent import DQNAgent
+import torch.nn as nn
+import numpy as np
+import imageio
 
+
+# Diskrete zu kontinuierliche Aktion (wie im Notebook)
 def discrete_to_continuous_action(action):
     if action == 0:
-        return np.array([0.0, 0.0, 0.0])
+        return np.array([0.0, 0.0, 0.0])  # Nichts tun
     elif action == 1:
-        return np.array([-1.0, 0.0, 0.0])
+        return np.array([1.0, 0.0, 0.0])  # Rechts
     elif action == 2:
-        return np.array([1.0, 0.0, 0.0])
+        return np.array([-1.0, 0.0, 0.0])  # Links
     elif action == 3:
-        return np.array([0.0, 1.0, 0.0])
+        return np.array([0.0, 1.0, 0.0])  # Gas
     elif action == 4:
-        return np.array([0.0, 0.0, 0.8])
-    else:
-        return np.array([0.0, 0.0, 0.0])
+        return np.array([0.0, 0.0, 0.8])  # Bremsen
+    return np.array([0.0, 0.0, 0.0])
 
+
+# SkipFrame Wrapper um mehrere Schritte zu überspringen
 class SkipFrame(gym.Wrapper):
-    def __init__(self, env, skip):
+    def __init__(self, env, skip=4):
         super().__init__(env)
         self._skip = skip
         self.observation_space = env.observation_space
@@ -41,44 +45,86 @@ class SkipFrame(gym.Wrapper):
                 break
         return obs, total_reward, terminated, truncated, info
 
-# Environment (gleich wie im Training!)
-env = gym.make("CarRacing-v3", render_mode="human")
-env = GrayscaleObservation(env, keep_dim=False)
-env = ResizeObservation(env, (84, 84))
-env = FrameStackObservation(env, stack_size=4)
-env = SkipFrame(env, skip=4)
 
-# Agent laden
-agent = DQNAgent(action_dim=5)
-agent.q_net.load_state_dict(torch.load("trained_agent.pth"))
-agent.q_net.eval()
+# DQN-Netzwerkarchitektur
+class DQN(nn.Module):
+    def __init__(self, action_dim):
+        super().__init__()
+        self.conv = nn.Sequential(
+            nn.Conv2d(4, 32, kernel_size=8, stride=4),
+            nn.ReLU(),
+            nn.Conv2d(32, 64, kernel_size=4, stride=2),
+            nn.ReLU(),
+            nn.Conv2d(64, 64, kernel_size=3, stride=1),
+            nn.ReLU(),
+        )
+        self.fc = nn.Sequential(
+            nn.Linear(3136, 512),
+            nn.ReLU(),
+            nn.Linear(512, 256),
+            nn.ReLU(),
+            nn.Linear(256, 128),
+            nn.ReLU(),
+            nn.Linear(128, action_dim),
+        )
 
-print("🚗 Agent Test gestartet...")
+    def forward(self, x):
+        x = x / 255.0
+        x = self.conv(x)
+        x = torch.flatten(x, 1)
+        return self.fc(x)
 
-num_test_episodes = 3  # Teste 3 Fahrten
 
-for episode in range(num_test_episodes):
-    state, _ = env.reset()
-    done = False
-    total_reward = 0
+# Agent für Inferenz
+class InferenceAgent:
+    def __init__(self, model_path, action_dim=5):
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.q_net = DQN(action_dim).to(self.device)
+        self.q_net.load_state_dict(torch.load(model_path, map_location=self.device))
+        self.q_net.eval()
 
-    while not done:
-        env.render()
-        time.sleep(0.01)  # Optional, um die Fahrt lesbar zu machen
-
-        # WICHTIG: Im Test keine Exploration!
-        state_tensor = torch.FloatTensor(np.array(state)).unsqueeze(0)
+    def act(self, state):
+        state = torch.FloatTensor(state).unsqueeze(0).to(self.device)
         with torch.no_grad():
-            q_values = agent.q_net(state_tensor)
-        action = q_values.argmax().item()
-        continuous_action = discrete_to_continuous_action(action)
+            q_values = self.q_net(state)
+        return q_values.argmax().item()
 
-        next_state, reward, terminated, truncated, _ = env.step(continuous_action)
+
+# Test Funktion für den Agenten
+def test_agent(
+    model_path="trained_agent.pth", gif_path="agent_run.gif", max_steps=1000
+):
+    env = gym.make("CarRacing-v3", render_mode="rgb_array")
+    env = GrayscaleObservation(env, keep_dim=False)
+    env = ResizeObservation(env, (84, 84))
+    env = FrameStackObservation(env, stack_size=4)
+    env = SkipFrame(env, skip=4)
+
+    agent = InferenceAgent(model_path)
+    state, _ = env.reset()
+    frames = []
+    total_reward = 0
+    step = 0
+
+    while True:
+        frame = env.render()
+        frames.append(frame)
+
+        action = agent.act(np.array(state))
+        cont_action = discrete_to_continuous_action(action)
+        state, reward, terminated, truncated, _ = env.step(cont_action)
+
         total_reward += reward
-        state = next_state
-        done = terminated or truncated
+        step += 1
+        if terminated or truncated or step >= max_steps:
+            break
 
-    print(f"Test-Episode {episode + 1}: Reward = {total_reward:.2f}")
+    env.close()
+    imageio.mimsave(gif_path, frames, fps=30)
+    print(f"\nTest abgeschlossen — {step} Schritte")
+    print(f"Gesamtreward: {total_reward:.2f}")
+    print(f"GIF gespeichert: {gif_path}")
 
-env.close()
-print("✅ Test abgeschlossen.")
+
+if __name__ == "__main__":
+    test_agent()

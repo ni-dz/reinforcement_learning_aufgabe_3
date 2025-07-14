@@ -1,0 +1,9 @@
+gymnasium[box2d]        # Gymnasium Bibliothek mit Box2D-Umgebungen
+torch                   # PyTorch für Deep Learning
+numpy                   # NumPy für numerische Operationen   
+plotly                  # Plotly für interaktive Visualisierungen
+ipywidgets              # IPython Widgets für interaktive Jupyter Notebooks
+nbformat                # Formatierung von Jupyter Notebooks
+notebook                # Jupyter Notebook Unterstützung
+kaleido                 # Plotly-Kaleido für das Speichern von Grafiken
+imageio                 # Für die Erstellung von GIFs aus Render-Frames
