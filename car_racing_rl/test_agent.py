@@ -120,7 +120,7 @@ def test_agent(
             break
 
     env.close()
-    imageio.mimsave(gif_path, frames, fps=30)
+    imageio.mimsave(gif_path, frames, fps=30, loop=0)
     print(f"\nTest abgeschlossen — {step} Schritte")
     print(f"Gesamtreward: {total_reward:.2f}")
     print(f"GIF gespeichert: {gif_path}")
