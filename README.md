@@ -63,7 +63,7 @@ Im Ordner `car_racing_rl/img/` befinden sich:
 
 `epsilon_plot.png`: Visualisierung des Verlaufes des Epsilon Wertes über die Zeit
 
-## Demo des Agenten beim Fahren
+### Demo des Agenten beim Fahren
 
 ![Agent in Aktion](car_racing_rl/agent_run.gif)
 
