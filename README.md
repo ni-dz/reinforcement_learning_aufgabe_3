@@ -63,7 +63,7 @@ Im Ordner `car_racing_rl/img/` befinden sich:
 
 Agent in Action (simuliert durch das Python Skript in `test_agent.py`).
 
-Man erkennt, dass der Agent sehr gut der Strecle folgen kann und sogar bei leichtem Abkommen von der Strecke wieder sicher zurück findet.
+Man erkennt deutlich, dass der Agent sehr gut der Strecke folgen kann und sogar beim leichten Abkommen von der Strecke wieder sicher zurück findet.
 
 ## Hinweise
 
