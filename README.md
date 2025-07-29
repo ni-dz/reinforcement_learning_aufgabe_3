@@ -6,12 +6,6 @@
 
 Dieses Projekt zeigt die Entwicklung, das Training und die Auswertung eines Reinforcement-Learning-Agenten auf Basis von **Double Deep Q-Networks (DDQN)** zur autonomen Steuerung eines Fahrzeugs in der Umgebung `CarRacing-v3`.
 
-Der Agent nutzt unter anderem:
-- FrameStacking und Bildvorverarbeitung (Graustufen, Resize auf 84×84)
-- Experience Replay und Soft Target Updates (Polyak Averaging)
-- Huber Loss zur Stabilisierung
-- Diskrete Aktionsquantisierung für kontinuierliche Steuerung
-
 ## Projektstruktur
 
 In den Ordner `car_racing_rl/` befinden sich folgende Dateien und Ordner:
@@ -67,7 +61,9 @@ Im Ordner `car_racing_rl/img/` befinden sich:
 
 ![Agent in Aktion](car_racing_rl/agent_run.gif)
 
-Agent in Action (simuliert durch das Python Skript in `test_agent.py`)
+Agent in Action (simuliert durch das Python Skript in `test_agent.py`).
+
+Man erkennt, dass der Agent sehr gut der Strecle folgen kann und sogar bei leichtem Abkommen von der Strecke wieder sicher zurück findet.
 
 ## Hinweise
 
